@@ -40,11 +40,12 @@ main(int argc, char **argv)
 			memcpy(buff + sizeof(struct timeval), &rank, sizeof(rank));
 			// non-blocking send
 			MPI_Isend(buff, MSG_SIZE, MPI_BYTE, other, TAG_ASK, MPI_COMM_WORLD, &request);
-			printf("%d asked %d\n", rank, other);
+#ifdef DEBUG
+			printf("Process %d asked process %d\n", rank, other);
+#endif
 		}
 	}
 
-	printf("%d asked all\n", rank);
 	// self-permissioning
 	int permissions_number = 1;
 	MPI_Status status;
@@ -61,12 +62,13 @@ main(int argc, char **argv)
     while (permissions_number != size)
 	{
 		MPI_Recv(buff, MSG_SIZE, MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-		printf("%d recv answer\n", rank);
 		switch(status.MPI_TAG)
 		{
 			// permission granted from some other proc
 			case TAG_OK:
-				printf("%d recv OK from %d\n", rank, status.MPI_SOURCE);
+#ifdef DEBUG
+				printf("Process %d recv OK from process %d\n", rank, status.MPI_SOURCE);
+#endif
 				permissions_number++;
 				break;
 
@@ -74,26 +76,31 @@ main(int argc, char **argv)
 			case TAG_ASK:
 				memcpy(&other_time, buff, sizeof(struct timeval));
 				other_proc = status.MPI_SOURCE;
-				printf("%d recv ask from %d\n", rank, other_proc);
 				if (timercmp(&cur_time, &other_time, >))
 				{
-					printf("%d recv earlier ask from %d, answer OK\n", rank, other_proc);
+#ifdef DEBUG
+					printf("Process %d recv earlier ask from process %d, answer OK\n", rank, other_proc);
+#endif
 					// Other process asked earlier, answer OK to him
 					MPI_Send(buff, MSG_SIZE, MPI_BYTE, other_proc, TAG_OK, MPI_COMM_WORLD);
+					waiting_procs[other_proc] = -1;
 				}
 				else
 				{
 					// Other process asked later, remember him
-					printf("%d recv later ask from %d, remember\n", rank, other_proc);
+#ifdef DEBUG
+					printf("Process %d recv later ask from process %d, remember\n", rank, other_proc);
+#endif
 					waiting_procs[other_proc] = 1;
 				}
 				break;
 			default:
-				printf("WTF? recv tag %d\n", status.MPI_TAG);
 				MPI_Abort(MPI_COMM_WORLD, MPI_ERR_TAG);
 		}
 	}
-	printf("%d starting critical section \n", rank);	
+#ifdef DEBUG
+	printf("Process %d starting critical section \n", rank);	
+#endif
 //<проверка наличия файла “critical.txt”>;
 	if (!access(critical_file, F_OK)) 
 	{
@@ -109,7 +116,9 @@ main(int argc, char **argv)
 			MPI_Abort(MPI_COMM_WORLD, MPI_ERR_FILE);
 		}
 		int time_to_sleep = random() % MAX_SLEEP_TIME;
-		printf("%d sleep for %d\n", rank, time_to_sleep);
+#ifdef DEBUG
+		printf("Process %d will sleep for %d sec\n", rank, time_to_sleep);
+#endif
 		sleep(time_to_sleep);
 		if (close(fd))
 		{
@@ -122,26 +131,51 @@ main(int argc, char **argv)
 			MPI_Abort(MPI_COMM_WORLD, MPI_ERR_FILE);
 		}
 	}
-	printf("%d ended critical section\n", rank);
+#ifdef DEBUG
+	printf("Process %d ended critical section\n", rank);
+#endif
+	printf("Process %d ended critical section\n", rank);
 // exit_critical_section
 // Answer OK to all remembered procs
 	for (int i = 0; i < size; i++)
 	{
-		if (waiting_procs[i])
+		if (waiting_procs[i] == 1)
 		{
-			printf("%d send OK to waiting %d\n", rank, i);
+#ifdef DEBUG
+			printf("Process %d send OK to waiting process %d\n", rank, i);
+#endif
 			MPI_Isend(buff, MSG_SIZE, MPI_BYTE, i, TAG_OK, MPI_COMM_WORLD, &request);
+			waiting_procs[i] = -1;
 		}
 	}
 	
-	printf("Process %d sended all OKS\n", rank);
+	// this process also ended sending ask messages
+	waiting_procs[rank] = -1;
+
+	// catch all remainded messages 
 	while (1)
 	{
+		int not_end = 0;
+		for (int i = 0; i < size; i++)
+		{
+			if (waiting_procs[i] != -1)
+			{
+				not_end = 1;
+				break;
+			}
+		}
+		if (!not_end)
+		{
+			break;
+		}
 		MPI_Recv(buff, MSG_SIZE, MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 		if (status.MPI_TAG == TAG_ASK)
 		{
-			printf("%d recv ask from %d, answering OK\n", rank, status.MPI_SOURCE);
+#ifdef DEBUG
+			printf("Process %d recv ask from process %d, answering OK\n", rank, status.MPI_SOURCE);
+#endif
 			MPI_Isend(buff, MSG_SIZE, MPI_BYTE, status.MPI_SOURCE, TAG_OK, MPI_COMM_WORLD, &request);
+			waiting_procs[status.MPI_SOURCE] = -1;
 		}	
 	}
 	MPI_Finalize();
